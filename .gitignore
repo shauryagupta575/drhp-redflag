@@ -1,0 +1,29 @@
+# Secrets: commit .env.example only
+.env
+.env.*
+!.env.example
+
+# Raw PDFs, caches and other local data
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Node
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
