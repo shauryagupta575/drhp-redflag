@@ -25,8 +25,7 @@ class FakeClock:
 @pytest.fixture(autouse=True)
 def no_retry_sleep(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     # tenacity's backoff would otherwise really sleep between retries.
-    for method in (PoliteClient._fetch_with_retry, PoliteClient._download_with_retry):
-        monkeypatch.setattr(method.retry, "sleep", lambda s: None)  # type: ignore[union-attr]
+    monkeypatch.setattr(PoliteClient._fetch_with_retry.retry, "sleep", lambda s: None)  # type: ignore[attr-defined]
     yield
 
 
@@ -302,3 +301,46 @@ def test_download_respects_robots(tmp_path: Path) -> None:
         with pytest.raises(DisallowedError):
             client.download("https://example.test/private/f.pdf", tmp_path / "f.pdf")
     assert log == ["/robots.txt"]
+
+
+def test_download_keeps_resuming_while_progressing(tmp_path: Path) -> None:
+    full = bytes(range(256)) * 4  # 1024 bytes delivered 100 bytes per attempt
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(404)
+        seen.append(request.headers.get("range"))
+        start = int((request.headers.get("range") or "bytes=0-").removeprefix("bytes=")[:-1])
+        chunk = full[start : start + 100]
+        if start + 100 >= len(full):
+            return httpx.Response(
+                206, headers={"Content-Range": f"bytes {start}-1023/1024"}, content=chunk
+            )
+        return httpx.Response(
+            206 if start else 200,
+            headers={"Content-Range": f"bytes {start}-1023/1024", "Content-Length": "1024"},
+            content=dropping_stream(chunk),
+        )
+
+    with make_client(tmp_path, handler) as client:
+        client.download("https://example.test/f.pdf", tmp_path / "f.pdf")
+    assert (tmp_path / "f.pdf").read_bytes() == full
+    assert len(seen) == 11  # far more than the stall limit, because each attempt progressed
+
+
+def test_download_gives_up_after_three_stalled_attempts(tmp_path: Path) -> None:
+    calls = {"n": 0}
+    clock = FakeClock()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(404)
+        calls["n"] += 1
+        raise httpx.ReadTimeout("stalled")
+
+    with make_client(tmp_path, handler, clock) as client:
+        with pytest.raises(TransientHTTPError):
+            client.download("https://example.test/f.pdf", tmp_path / "f.pdf")
+    assert calls["n"] == 3
+    assert 10.0 in clock.slept and 20.0 in clock.slept  # backoff between stalled attempts

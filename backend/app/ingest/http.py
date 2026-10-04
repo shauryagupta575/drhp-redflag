@@ -5,7 +5,8 @@
 - every response is cached on disk, so re-runs make no requests
 - transient failures (timeouts, 5xx) are retried with exponential backoff
 - binary downloads stream to a .part file and resume with HTTP Range requests, so a
-  dropped connection does not restart a large PDF from zero
+  dropped connection does not restart a large PDF from zero; resuming continues while
+  attempts make progress and stops after 3 attempts in a row without new bytes
 - a block (403/429/530 or a firewall page) raises BlockedError immediately and is never
   retried: "If a site blocks you, download manually. Don't fight it."
 """
@@ -45,6 +46,8 @@ class TransientHTTPError(RuntimeError):
 
 
 class PoliteClient:
+    MAX_STALLED_ATTEMPTS = 3
+
     def __init__(
         self,
         cache_dir: Path,
@@ -97,7 +100,20 @@ class PoliteClient:
             raise DisallowedError(f"robots.txt disallows {url}")
         dest.parent.mkdir(parents=True, exist_ok=True)
         part = dest.with_suffix(dest.suffix + ".part")
-        self._download_with_retry(url, part)
+        stalled = 0
+        while True:
+            before = part.stat().st_size if part.exists() else 0
+            try:
+                self._download_once(url, part)
+                break
+            except TransientHTTPError:
+                after = part.stat().st_size if part.exists() else 0
+                # Keep resuming while attempts make progress; give up after
+                # MAX_STALLED_ATTEMPTS in a row that add no bytes.
+                stalled = 0 if after > before else stalled + 1
+                if stalled >= self.MAX_STALLED_ATTEMPTS:
+                    raise
+                self._sleep(min(5.0 * 2**stalled, 60.0))
         part.replace(dest)
 
     # -- internals ----------------------------------------------------------------------
@@ -161,13 +177,7 @@ class PoliteClient:
             )
         return resp.content
 
-    @retry(
-        retry=retry_if_exception_type(TransientHTTPError),
-        wait=wait_exponential(multiplier=5, max=60),
-        stop=stop_after_attempt(8),
-        reraise=True,
-    )
-    def _download_with_retry(self, url: str, part: Path) -> None:
+    def _download_once(self, url: str, part: Path) -> None:
         have = part.stat().st_size if part.exists() else 0
         headers = {"Range": f"bytes={have}-"} if have else {}
         self._throttle(urlsplit(url).netloc)
