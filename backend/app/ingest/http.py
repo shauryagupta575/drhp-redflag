@@ -47,6 +47,9 @@ class TransientHTTPError(RuntimeError):
 
 class PoliteClient:
     MAX_STALLED_ATTEMPTS = 3
+    # A server can trickle bytes just fast enough to dodge the read timeout; cap each
+    # download attempt and resume with a fresh request instead.
+    MAX_ATTEMPT_S = 180.0
 
     def __init__(
         self,
@@ -204,9 +207,12 @@ class PoliteClient:
                         request=resp.request,
                         response=resp,
                     )
+                started = self._clock()
                 with part.open(mode) as fh:
                     first = True
                     for chunk in resp.iter_bytes():
+                        if self._clock() - started > self.MAX_ATTEMPT_S:
+                            raise TransientHTTPError(f"{url}: attempt exceeded time cap")
                         if first and start == 0 and any(m in chunk[:4096] for m in _BLOCK_MARKERS):
                             raise BlockedError(f"{url} returned a block page")
                         first = False

@@ -344,3 +344,30 @@ def test_download_gives_up_after_three_stalled_attempts(tmp_path: Path) -> None:
             client.download("https://example.test/f.pdf", tmp_path / "f.pdf")
     assert calls["n"] == 3
     assert 10.0 in clock.slept and 20.0 in clock.slept  # backoff between stalled attempts
+
+
+def test_slow_attempt_is_cut_and_resumed(tmp_path: Path) -> None:
+    full = b"%PDF-" + b"x" * 95  # 100 bytes, served 10 bytes per chunk
+    clock = FakeClock()
+    seen: list[str | None] = []
+
+    def trickle(data: bytes) -> Iterator[bytes]:
+        for i in range(0, len(data), 10):
+            clock.now += 50  # each chunk "takes" 50 s
+            yield data[i : i + 10]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(404)
+        seen.append(request.headers.get("range"))
+        start = int((request.headers.get("range") or "bytes=0-").removeprefix("bytes=")[:-1])
+        return httpx.Response(
+            206 if start else 200,
+            headers={"Content-Range": f"bytes {start}-99/100", "Content-Length": "100"},
+            content=trickle(full[start:]),
+        )
+
+    with make_client(tmp_path, handler, clock) as client:
+        client.download("https://example.test/f.pdf", tmp_path / "f.pdf")
+    assert (tmp_path / "f.pdf").read_bytes() == full
+    assert len(seen) > 1 and seen[1] is not None  # the slow attempt was cut, then resumed
