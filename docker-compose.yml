@@ -3,17 +3,23 @@ services:
     image: pgvector/pgvector:pg16
     environment: { POSTGRES_USER: drhp, POSTGRES_PASSWORD: drhp, POSTGRES_DB: drhp }
     volumes: [pgdata:/var/lib/postgresql/data]
+    # Published on localhost only, for running ingest/migrations from the host (uv run ...).
+    ports: ["127.0.0.1:5433:5432"]
   redis:
     image: redis:7-alpine
   api:
     build: ./backend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     env_file: .env
+    environment: { DATA_DIR: /app/data }
+    volumes: [./data:/app/data]
     depends_on: [postgres, redis]
     ports: ["8000:8000"]
   worker:
     build: ./backend
     command: celery -A app.workers.celery_app worker -l info -c 2
     env_file: .env
+    environment: { DATA_DIR: /app/data }
+    volumes: [./data:/app/data]
     depends_on: [postgres, redis]
 volumes: { pgdata: {} }

@@ -8,6 +8,18 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_USER: drhp, POSTGRES_PASSWORD: drhp, POSTGRES_DB: drhp }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U drhp" --health-interval 5s --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://drhp:drhp@localhost:5432/drhp_test
+      # Fail instead of skipping the integration tests if Postgres is unreachable.
+      REQUIRE_TEST_DB: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.2.0

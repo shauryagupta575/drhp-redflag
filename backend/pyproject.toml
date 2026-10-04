@@ -5,12 +5,19 @@ description = "DRHP Red-Flag Agent backend: FastAPI API and Celery workers"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic>=1.20.0",
+    "beautifulsoup4>=4.15.0",
     "celery[redis]>=5.6.3",
     "fastapi>=0.142.2",
+    "httpx>=0.28.1",
+    "pandas>=3.0.6",
     "psycopg[binary]>=3.3.6",
     "pydantic-settings>=2.15.0",
+    "pymupdf>=1.28.2",
+    "rapidfuzz>=3.14.6",
     "sqlalchemy>=2.1.3",
+    "tenacity>=9.1.4",
     "uvicorn[standard]>=0.54.0",
+    "yfinance>=1.7.0",
 ]
 
 [tool.uv]
@@ -24,6 +31,10 @@ extend-exclude = ["app/db/migrations/versions"]
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# Test fixtures hold verbatim CSV rows and SEBI slugs.
+"tests/*" = ["E501"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
@@ -31,8 +42,12 @@ plugins = ["pydantic.mypy"]
 exclude = ["app/db/migrations/"]
 
 [[tool.mypy.overrides]]
-module = ["celery", "celery.*"]
+module = ["celery", "celery.*", "yfinance", "yfinance.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tests.helpers"]
+disallow_untyped_calls = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -41,7 +56,9 @@ testpaths = ["tests"]
 dev = [
     "httpx>=0.28.1",
     "mypy>=2.4.0",
+    "pandas-stubs>=3.0.5.260914",
     "pre-commit>=4.6.2",
     "pytest>=9.1.1",
     "ruff>=0.16.10",
+    "types-beautifulsoup4>=4.12.0.20250516",
 ]
