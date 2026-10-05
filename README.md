@@ -2,7 +2,7 @@
 
 An AI agent that reads Indian IPO prospectuses like an analyst, cites every warning, and proves its value against real post-listing returns.
 
-> **Status:** Phase 1 (data collection). IPO universe, offer documents (RHP/DRHP PDFs) and post-listing prices are ingested into Postgres.
+> **Status:** Phase 2 (PDF parsing and section location). Offer documents are parsed into page-numbered text, tables and pgvector embeddings, and their key sections are located.
 
 ## Quick start
 
@@ -67,6 +67,40 @@ and it stops at the first block instead of retrying.
 
 Outputs: tables `companies`, `ipos`, `documents`, `prices`, plus
 `data/processed/universe.csv` and `data/processed/ingest_report.md`.
+
+## PDF parsing and section location (Phase 2)
+
+```bash
+cd backend
+uv run python -m app.parsing.run                   # every downloaded document
+uv run python -m app.parsing.run --doc-type DRHP   # or --document-ids 3,7 [--force]
+```
+
+For each document:
+
+1. **Pages** → `pages`: PyMuPDF text per 1-based PDF page, with text-block coordinates
+   (`blocks`) for later citation highlighting. Pages without a text layer go to the
+   **Tesseract** OCR fallback (`is_scanned = true`).
+2. **Chunks** → `chunks`: ~500-token windows with ~100-token overlap, embedded locally with
+   `BAAI/bge-small-en-v1.5` (384 dimensions, no API cost) and stored in pgvector. The guide
+   suggests ~800 tokens; bge-small reads at most 512, so chunks are smaller so every token is
+   embedded.
+3. **Section map** → `documents.section_map`, e.g. `{"related_party": [312, 318]}` (PDF pages):
+   the document's own table of contents, mapped from printed to PDF page numbers via footer
+   page numbers, confirmed by the heading on the start page and the start of the next section,
+   plus an embedding rank (pgvector). Related-party transactions, usually a note inside the
+   restated financials, are found by heading search when the TOC has no chapter for them or
+   only a cross-reference.
+4. **Tables** → `pages.tables`: pdfplumber tables (JSON) from the restated-financials pages.
+
+Sections located: restated financials, related party, outstanding litigation, capital
+structure, objects of the issue, risk factors, promoters, group companies, basis for issue
+price, financial indebtedness.
+
+`data/processed/section_check.md` is the spot-check sheet: per document and section, the page
+range, how it was found, whether the start heading and the following section were confirmed,
+the embedding rank, and the first lines of the start page and of the page after the end.
+Tesseract is needed locally for OCR (`brew install tesseract`); the Docker image includes it.
 
 ## Development
 

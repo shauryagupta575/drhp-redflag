@@ -1,5 +1,10 @@
 FROM python:3.12-slim
 
+# Tesseract: OCR fallback for scanned pages (Phase 2).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /bin/uv
 
 WORKDIR /app

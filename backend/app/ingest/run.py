@@ -3,6 +3,7 @@
     python -m app.ingest.run                      # all steps
     python -m app.ingest.run --steps documents    # one step
     python -m app.ingest.run --limit 5            # first 5 IPOs (newest listings first)
+    python -m app.ingest.run --sample 12 --doc-types DRHP   # DRHPs of a random sample
 
 Inputs (gitignored, under DATA_DIR, see README):
     raw/nse/IPO-PastIssue-*.csv     NSE "Past Issues" CSV (downloaded by hand)
@@ -16,6 +17,7 @@ Outputs:
 import argparse
 import csv
 import logging
+import random
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -128,13 +130,14 @@ def step_documents(
     uni: Universe,
     matches: dict[str, FilingMatch],
     data_dir: Path,
+    doc_types: Sequence[str] = ("RHP", "DRHP"),
 ) -> DocResult:
     result = DocResult()
     ids = _ipo_ids(session, uni)
     pdf_dir = data_dir / "pdfs"
     pdf_dir.mkdir(parents=True, exist_ok=True)
     # All RHPs first (the preferred document), then DRHPs.
-    for doc_type in ("RHP", "DRHP"):
+    for doc_type in doc_types:
         for n, issue in enumerate(uni.issues, start=1):
             ipo_id = ids.get(issue.symbol)
             if ipo_id is None:
@@ -298,6 +301,13 @@ def main(argv: Sequence[str] | None = None, settings: Settings | None = None) ->
     parser.add_argument("--steps", default=",".join(STEPS), help=f"comma list of {STEPS}")
     parser.add_argument("--limit", type=int, help="only the N most recently listed IPOs")
     parser.add_argument("--symbols", help="comma list of NSE symbols to restrict to")
+    parser.add_argument(
+        "--sample", type=int, help="a random sample of N IPOs (reproducible with --seed)"
+    )
+    parser.add_argument("--seed", type=int, default=42, help="random seed for --sample")
+    parser.add_argument(
+        "--doc-types", default="RHP,DRHP", help="documents to fetch, in order (RHP,DRHP)"
+    )
     args = parser.parse_args(argv)
     steps = [s.strip() for s in args.steps.split(",") if s.strip()]
     unknown = set(steps) - set(STEPS)
@@ -312,8 +322,16 @@ def main(argv: Sequence[str] | None = None, settings: Settings | None = None) ->
     if args.symbols:
         wanted = {s.strip().upper() for s in args.symbols.split(",")}
         uni.issues = [i for i in uni.issues if i.symbol in wanted]
+    if args.sample:
+        uni.issues = sorted(
+            random.Random(args.seed).sample(uni.issues, min(args.sample, len(uni.issues))),
+            key=lambda i: i.symbol,
+        )
     if args.limit:
         uni.issues = uni.issues[: args.limit]
+    doc_types = [t.strip().upper() for t in args.doc_types.split(",") if t.strip()]
+    if not doc_types or set(doc_types) - {"RHP", "DRHP"}:
+        parser.error("--doc-types must be a comma list of RHP and/or DRHP")
 
     from app.db.session import SessionLocal
 
@@ -329,7 +347,7 @@ def main(argv: Sequence[str] | None = None, settings: Settings | None = None) ->
             with PoliteClient(
                 data_dir / "cache", settings.http_user_agent, settings.http_min_interval_s
             ) as client:
-                doc_result = step_documents(session, client, uni, matches, data_dir)
+                doc_result = step_documents(session, client, uni, matches, data_dir, doc_types)
             log.info(
                 "documents: %d downloaded, %d already stored, %d not in SEBI indices, %d failed",
                 doc_result.downloaded,

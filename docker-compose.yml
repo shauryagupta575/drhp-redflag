@@ -11,7 +11,7 @@ services:
     build: ./backend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     env_file: .env
-    environment: { DATA_DIR: /app/data }
+    environment: { DATA_DIR: /app/data, HF_HOME: /app/data/cache/hf }
     volumes: [./data:/app/data]
     depends_on: [postgres, redis]
     ports: ["8000:8000"]
@@ -19,7 +19,7 @@ services:
     build: ./backend
     command: celery -A app.workers.celery_app worker -l info -c 2
     env_file: .env
-    environment: { DATA_DIR: /app/data }
+    environment: { DATA_DIR: /app/data, HF_HOME: /app/data/cache/hf }
     volumes: [./data:/app/data]
     depends_on: [postgres, redis]
 volumes: { pgdata: {} }
